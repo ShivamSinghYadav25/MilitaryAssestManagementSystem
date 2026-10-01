@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Plus } from 'lucide-react';
-
+import API_URL from '../config/api';
 const ASSET_TYPES = [
   { value: 'VEHICLE', label: 'Vehicle' },
   { value: 'WEAPON', label: 'Weapon' },
@@ -40,7 +40,9 @@ const Purchases = () => {
       const params = new URLSearchParams();
       Object.entries(filters).forEach(([k, v]) => v && params.append(k, v));
 
-      const response = await fetch(`/api/purchases?${params}`, { headers: authHeaders });
+      const response = await fetch(`${API_URL}/api/purchases?${params}`, {
+  headers: authHeaders
+});
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Failed to fetch purchases');
 
@@ -62,7 +64,9 @@ const Purchases = () => {
   useEffect(() => {
     (async () => {
       try {
-        const response = await fetch('/api/bases', { headers: authHeaders });
+        const response = await fetch(`${API_URL}/api/bases`, {
+  headers: authHeaders
+});
         const data = await response.json();
         setBases(Array.isArray(data) ? data : []);
       } catch (err) {
@@ -76,11 +80,14 @@ const Purchases = () => {
     e.preventDefault();
     setSubmitting(true);
     try {
-      const response = await fetch('/api/purchases', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders },
-        body: JSON.stringify(formData),
-      });
+    const response = await fetch(`${API_URL}/api/purchases`, {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    ...authHeaders
+  },
+  body: JSON.stringify(formData),
+});
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Failed to record purchase');
 

@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Plus, Check, X, ArrowRight } from 'lucide-react';
+import API_URL from '../config/api';
 
 const ASSET_TYPES = [
   { value: 'VEHICLE', label: 'Vehicle' },
@@ -27,6 +28,15 @@ const statusColor = (status) => {
   }
 };
 
+// Safely parse a response; avoids "Unexpected token <" when the server returns HTML
+const parseJson = async (response) => {
+  try {
+    return await response.json();
+  } catch {
+    return {};
+  }
+};
+
 const Transfers = () => {
   const { token, user } = useAuth();
   const canManage = user?.role === 'ADMIN' || user?.role === 'LOGISTICS_OFFICER';
@@ -37,92 +47,134 @@ const Transfers = () => {
   const [showForm, setShowForm] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [formError, setFormError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [updatingId, setUpdatingId] = useState(null);
+  const [refreshKey, setRefreshKey] = useState(0);
   const [formData, setFormData] = useState(emptyForm);
   const [filters, setFilters] = useState(emptyFilters);
 
-  const authHeaders = { Authorization: `Bearer ${token}` };
+  // Stable reference so effects don't need eslint-disable
+  const authHeaders = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
 
-  const fetchTransfers = useCallback(async () => {
-    try {
-      const params = new URLSearchParams();
-      Object.entries(filters).forEach(([k, v]) => v && params.append(k, v));
+  const refresh = () => setRefreshKey((k) => k + 1);
 
-      const response = await fetch(`/api/transfers?${params}`, { headers: authHeaders });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Failed to fetch transfers');
-
-      setTransfers(Array.isArray(data) ? data : []);
-      setError('');
-    } catch (err) {
-      console.error('Failed to fetch transfers:', err);
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filters, token]);
-
+  // Fetch transfers; aborts stale requests so out-of-order responses can't overwrite newer filters
   useEffect(() => {
-    fetchTransfers();
-  }, [fetchTransfers]);
+    if (!token) return;
+    const controller = new AbortController();
 
-  useEffect(() => {
     (async () => {
       try {
-        const response = await fetch('/api/bases', { headers: authHeaders });
-        const data = await response.json();
+        const params = new URLSearchParams();
+        Object.entries(filters).forEach(([k, v]) => v && params.append(k, v));
+
+        const response = await fetch(`${API_URL}/api/transfers?${params}`, {
+          headers: authHeaders,
+          signal: controller.signal,
+        });
+        const data = await parseJson(response);
+        if (!response.ok) throw new Error(data.error || 'Failed to fetch transfers');
+
+        setTransfers(Array.isArray(data) ? data : []);
+        setError('');
+      } catch (err) {
+        if (err.name === 'AbortError') return;
+        console.error('Failed to fetch transfers:', err);
+        setError(err.message);
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    })();
+
+    return () => controller.abort();
+  }, [filters, token, authHeaders, refreshKey]);
+
+  // Fetch bases
+  useEffect(() => {
+    if (!token) return;
+    const controller = new AbortController();
+
+    (async () => {
+      try {
+        const response = await fetch(`${API_URL}/api/bases`, {
+          headers: authHeaders,
+          signal: controller.signal,
+        });
+        const data = await parseJson(response);
         setBases(Array.isArray(data) ? data : []);
       } catch (err) {
+        if (err.name === 'AbortError') return;
         console.error('Failed to fetch bases:', err);
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
+
+    return () => controller.abort();
+  }, [token, authHeaders]);
+
+  const handleFromBaseChange = (value) => {
+    // Clear destination if it now matches the source
+    setFormData((prev) => ({
+      ...prev,
+      fromBaseId: value,
+      toBaseId: prev.toBaseId === value ? '' : prev.toBaseId,
+    }));
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setFormError('');
+
     if (formData.fromBaseId === formData.toBaseId) {
-      alert('Source and destination base must be different');
+      setFormError('Source and destination base must be different');
       return;
     }
+    const quantity = Number(formData.quantity);
+    if (!Number.isInteger(quantity) || quantity < 1) {
+      setFormError('Quantity must be a whole number of at least 1');
+      return;
+    }
+
     setSubmitting(true);
     try {
-      const response = await fetch('/api/transfers', {
+      const response = await fetch(`${API_URL}/api/transfers`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders },
-        body: JSON.stringify(formData),
+        body: JSON.stringify({ ...formData, quantity }),
       });
-      const data = await response.json();
+      const data = await parseJson(response);
       if (!response.ok) throw new Error(data.error || 'Failed to create transfer');
 
       setFormData(emptyForm);
       setShowForm(false);
-      fetchTransfers();
+      refresh();
     } catch (err) {
-      alert(err.message);
+      setFormError(err.message);
     } finally {
       setSubmitting(false);
     }
   };
 
   const updateTransferStatus = async (id, status) => {
+    if (updatingId !== null) return; // block double-clicks / concurrent updates
     const verb = status === 'COMPLETED' ? 'complete' : 'cancel';
     if (!window.confirm(`Are you sure you want to ${verb} this transfer?`)) return;
 
+    setUpdatingId(id);
     try {
-      const response = await fetch(`/api/transfers/${id}/status`, {
+      const response = await fetch(`${API_URL}/api/transfers/${id}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', ...authHeaders },
         body: JSON.stringify({ status }),
       });
-      const data = await response.json();
+      const data = await parseJson(response);
       if (!response.ok) throw new Error(data.error || 'Failed to update transfer');
-
-      fetchTransfers();
+      setError('');
     } catch (err) {
-      alert(err.message);
-      fetchTransfers();
+      setError(err.message);
+    } finally {
+      setUpdatingId(null);
+      refresh(); // always re-sync with the server
     }
   };
 
@@ -150,7 +202,10 @@ const Transfers = () => {
         </div>
         {canManage && (
           <button
-            onClick={() => setShowForm(!showForm)}
+            onClick={() => {
+              setFormError('');
+              setShowForm(!showForm);
+            }}
             className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
           >
             <Plus className="w-4 h-4" />
@@ -168,6 +223,11 @@ const Transfers = () => {
       {canManage && showForm && (
         <div className="bg-white rounded-xl shadow-md p-6 mb-6">
           <h2 className="text-xl font-semibold mb-4">Initiate Transfer</h2>
+          {formError && (
+            <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">
+              {formError}
+            </div>
+          )}
           <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             <div>
               <label className={labelClass}>Asset Type</label>
@@ -198,13 +258,13 @@ const Transfers = () => {
               <label className={labelClass}>From Base</label>
               <select
                 value={formData.fromBaseId}
-                onChange={(e) => setFormData({ ...formData, fromBaseId: e.target.value })}
+                onChange={(e) => handleFromBaseChange(e.target.value)}
                 className={inputClass}
                 required
               >
                 <option value="">Select Base</option>
                 {bases.map((base) => (
-                  <option key={base.id} value={base.id}>{base.name}</option>
+                  <option key={base.id} value={String(base.id)}>{base.name}</option>
                 ))}
               </select>
             </div>
@@ -220,7 +280,7 @@ const Transfers = () => {
                 {bases
                   .filter((base) => String(base.id) !== formData.fromBaseId)
                   .map((base) => (
-                    <option key={base.id} value={base.id}>{base.name}</option>
+                    <option key={base.id} value={String(base.id)}>{base.name}</option>
                   ))}
               </select>
             </div>
@@ -266,7 +326,7 @@ const Transfers = () => {
               >
                 <option value="">All Bases</option>
                 {bases.map((base) => (
-                  <option key={base.id} value={base.id}>{base.name}</option>
+                  <option key={base.id} value={String(base.id)}>{base.name}</option>
                 ))}
               </select>
             </div>
@@ -363,15 +423,19 @@ const Transfers = () => {
                         <>
                           <button
                             onClick={() => updateTransferStatus(transfer.id, 'COMPLETED')}
-                            className="text-green-600 hover:text-green-800"
+                            disabled={updatingId !== null}
+                            className="text-green-600 hover:text-green-800 disabled:opacity-40"
                             title="Complete"
+                            aria-label="Complete transfer"
                           >
                             <Check className="w-4 h-4" />
                           </button>
                           <button
                             onClick={() => updateTransferStatus(transfer.id, 'CANCELLED')}
-                            className="text-red-600 hover:text-red-800"
+                            disabled={updatingId !== null}
+                            className="text-red-600 hover:text-red-800 disabled:opacity-40"
                             title="Cancel"
+                            aria-label="Cancel transfer"
                           >
                             <X className="w-4 h-4" />
                           </button>

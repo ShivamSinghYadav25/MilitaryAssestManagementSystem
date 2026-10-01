@@ -7,21 +7,21 @@ const router = express.Router();
 
 const ASSET_TYPES = ['VEHICLE', 'WEAPON', 'AMMUNITION'];
 
-// Make an end-date filter inclusive of the whole selected day
 const endOfDay = (value) => {
   const d = new Date(value);
   d.setUTCHours(23, 59, 59, 999);
   return d;
 };
 
-// Record a purchase (Admin / Logistics Officer only)
-router.post('/', authenticate, authorize('ADMIN', 'LOGISTICS_OFFICER'), baseAccess, auditLogger('Purchase'), async (req, res) => {
+// Initiate a transfer between two bases (Admin / Logistics Officer only)
+router.post('/', authenticate, authorize('ADMIN', 'LOGISTICS_OFFICER'), auditLogger('Transfer'), async (req, res) => {
   try {
-    const { assetType, quantity, baseId, date } = req.body;
+    const { assetType, quantity, fromBaseId, toBaseId } = req.body;
 
     const type = String(assetType || '').toUpperCase();
     const qty = parseInt(quantity);
-    const base = parseInt(baseId);
+    const from = parseInt(fromBaseId);
+    const to = parseInt(toBaseId);
 
     if (!ASSET_TYPES.includes(type)) {
       return res.status(400).json({ error: 'Invalid asset type' });
@@ -29,68 +29,100 @@ router.post('/', authenticate, authorize('ADMIN', 'LOGISTICS_OFFICER'), baseAcce
     if (!Number.isInteger(qty) || qty < 1) {
       return res.status(400).json({ error: 'Quantity must be a positive whole number' });
     }
-    if (!Number.isInteger(base)) {
-      return res.status(400).json({ error: 'A base is required' });
+    if (!Number.isInteger(from) || !Number.isInteger(to)) {
+      return res.status(400).json({ error: 'Source and destination bases are required' });
+    }
+    if (from === to) {
+      return res.status(400).json({ error: 'Source and destination base must be different' });
     }
 
-    const baseExists = await prisma.base.findUnique({ where: { id: base } });
-    if (!baseExists) {
+    const found = await prisma.base.count({ where: { id: { in: [from, to] } } });
+    if (found !== 2) {
       return res.status(400).json({ error: 'Base not found' });
     }
 
-    const purchase = await prisma.purchase.create({
+    const transfer = await prisma.transfer.create({
       data: {
         assetType: type,
         quantity: qty,
-        baseId: base,
-        date: date ? new Date(date) : new Date(),
-        loggedBy: req.user.id
+        fromBaseId: from,
+        toBaseId: to,
+        status: 'PENDING'
       },
-      include: {
-        base: true,
-        user: { select: { name: true, email: true } }
-      }
+      include: { fromBase: true, toBase: true }
     });
 
-    res.status(201).json(purchase);
+    res.status(201).json(transfer);
   } catch (error) {
-    console.error('Purchase creation error:', error);
-    res.status(500).json({ error: 'Failed to create purchase' });
+    console.error('Transfer creation error:', error);
+    res.status(500).json({ error: 'Failed to create transfer' });
   }
 });
 
-// Purchase history with base / equipment type / date filters
+// Complete or cancel a pending transfer
+router.patch('/:id/status', authenticate, authorize('ADMIN', 'LOGISTICS_OFFICER'), auditLogger('Transfer Status'), async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const status = String(req.body.status || '').toUpperCase();
+
+    if (!['COMPLETED', 'CANCELLED'].includes(status)) {
+      return res.status(400).json({ error: 'Status must be COMPLETED or CANCELLED' });
+    }
+
+    const existing = await prisma.transfer.findUnique({ where: { id } });
+    if (!existing) {
+      return res.status(404).json({ error: 'Transfer not found' });
+    }
+    if (existing.status !== 'PENDING') {
+      return res.status(409).json({ error: `Transfer is already ${existing.status.toLowerCase()}` });
+    }
+
+    const transfer = await prisma.transfer.update({
+      where: { id },
+      data: { status },
+      include: { fromBase: true, toBase: true }
+    });
+
+    res.json(transfer);
+  } catch (error) {
+    console.error('Transfer status update error:', error);
+    res.status(500).json({ error: 'Failed to update transfer status' });
+  }
+});
+
+// Transfer history with base / equipment type / status / date filters
 router.get('/', authenticate, baseAccess, async (req, res) => {
   try {
-    const { base_id, type, start_date, end_date } = req.query;
+    const { base_id, type, status, start_date, end_date } = req.query;
 
-    // Commanders are always locked to their own base; others may filter by base
-    const baseId = req.baseFilter?.baseId ?? (base_id ? parseInt(base_id) : undefined);
+    const ownBase = req.baseFilter?.baseId;
+    const filterBase = ownBase ?? (base_id ? parseInt(base_id) : undefined);
 
     const where = {
-      ...(baseId && { baseId }),
+      // A base's history includes transfers both into and out of it
+      ...(filterBase && {
+        OR: [{ fromBaseId: filterBase }, { toBaseId: filterBase }]
+      }),
       ...(type && { assetType: type.toUpperCase() }),
+      ...(status && { status: status.toUpperCase() }),
       ...((start_date || end_date) && {
-        date: {
+        timestamp: {
           ...(start_date && { gte: new Date(start_date) }),
           ...(end_date && { lte: endOfDay(end_date) })
         }
       })
     };
 
-    const purchases = await prisma.purchase.findMany({
+    const transfers = await prisma.transfer.findMany({
       where,
-      include: {
-        base: true,
-        user: { select: { name: true, email: true } }
-      },
-      orderBy: { date: 'desc' }
+      include: { fromBase: true, toBase: true },
+      orderBy: { timestamp: 'desc' }
     });
 
-    res.json(purchases);
+    res.json(transfers);
   } catch (error) {
-    console.error('Purchases fetch error:', error);
-    res.status(500).json({ error: 'Failed to fetch purchases' });
+    console.error('Transfers fetch error:', error);
+    res.status(500).json({ error: 'Failed to fetch transfers' });
   }
 });
 

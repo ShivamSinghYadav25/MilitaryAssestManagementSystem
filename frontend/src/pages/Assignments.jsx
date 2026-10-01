@@ -1,9 +1,28 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Plus, RotateCcw, User, Zap } from 'lucide-react';
+import API_URL from '../config/api';
+
+const inputClass =
+  'w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none';
+const labelClass = 'block text-sm font-medium text-gray-700 mb-2';
+const thClass = 'px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider';
+const tdClass = 'px-6 py-4 whitespace-nowrap text-sm text-gray-900';
+
+const emptyAssignment = { assetId: '', personnelName: '' };
+const emptyExpenditure = { assetId: '', quantityExpended: '', reason: '' };
+
+// Safely parse a response; avoids crashes when the server returns HTML or an empty body
+const parseJson = async (response) => {
+  try {
+    return await response.json();
+  } catch {
+    return {};
+  }
+};
 
 const Assignments = () => {
-  const { token, user } = useAuth();
+  const { token } = useAuth();
   const [assignments, setAssignments] = useState([]);
   const [expenditures, setExpenditures] = useState([]);
   const [assets, setAssets] = useState([]);
@@ -11,105 +30,125 @@ const Assignments = () => {
   const [showAssignmentForm, setShowAssignmentForm] = useState(false);
   const [showExpenditureForm, setShowExpenditureForm] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [assignmentForm, setAssignmentForm] = useState({
-    assetId: '',
-    personnelName: ''
-  });
-  const [expenditureForm, setExpenditureForm] = useState({
-    assetId: '',
-    quantityExpended: '',
-    reason: ''
-  });
+  const [error, setError] = useState('');
+  const [assignmentError, setAssignmentError] = useState('');
+  const [expenditureError, setExpenditureError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [returningId, setReturningId] = useState(null);
+  const [assignmentForm, setAssignmentForm] = useState(emptyAssignment);
+  const [expenditureForm, setExpenditureForm] = useState(emptyExpenditure);
 
-  useEffect(() => {
-    fetchData();
-  }, []);
+  const authHeaders = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
-      const [assignRes, expendRes, assetRes] = await Promise.all([
-        fetch('/api/assignments', {
-          headers: { Authorization: `Bearer ${token}` },
-        }),
-        fetch('/api/expenditures', {
-          headers: { Authorization: `Bearer ${token}` },
-        }),
-        fetch('/api/assets', {
-          headers: { Authorization: `Bearer ${token}` },
-        }),
+      const responses = await Promise.all([
+        fetch(`${API_URL}/api/assignments`, { headers: authHeaders }),
+        fetch(`${API_URL}/api/expenditures`, { headers: authHeaders }),
+        fetch(`${API_URL}/api/assets`, { headers: authHeaders }),
       ]);
+      const [assignData, expendData, assetData] = await Promise.all(responses.map(parseJson));
 
-      setAssignments(await assignRes.json());
-      setExpenditures(await expendRes.json());
-      setAssets(await assetRes.json());
-    } catch (error) {
-      console.error('Failed to fetch data:', error);
+      const failed = responses.find((r) => !r.ok);
+      if (failed) {
+        const failedData = [assignData, expendData, assetData][responses.indexOf(failed)];
+        throw new Error(failedData.error || 'Failed to load data');
+      }
+
+      setAssignments(Array.isArray(assignData) ? assignData : []);
+      setExpenditures(Array.isArray(expendData) ? expendData : []);
+      setAssets(Array.isArray(assetData) ? assetData : []);
+      setError('');
+    } catch (err) {
+      console.error('Failed to fetch data:', err);
+      setError(err.message);
     } finally {
       setLoading(false);
     }
-  };
+  }, [authHeaders]);
+
+  useEffect(() => {
+    if (token) fetchData();
+  }, [token, fetchData]);
 
   const handleAssignmentSubmit = async (e) => {
     e.preventDefault();
+    setAssignmentError('');
+    setSubmitting(true);
     try {
-      const response = await fetch('/api/assignments', {
+      const response = await fetch(`${API_URL}/api/assignments`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(assignmentForm),
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
+        // FIX: was sending expenditureForm, which is why assignments failed
+        body: JSON.stringify({
+          ...assignmentForm,
+          personnelName: assignmentForm.personnelName.trim(),
+        }),
       });
+      const data = await parseJson(response);
+      if (!response.ok) throw new Error(data.error || 'Failed to create assignment');
 
-      if (!response.ok) throw new Error('Failed to create assignment');
-
-      setAssignmentForm({ assetId: '', personnelName: '' });
+      setAssignmentForm(emptyAssignment);
       setShowAssignmentForm(false);
       fetchData();
-    } catch (error) {
-      console.error('Failed to create assignment:', error);
-      alert('Failed to create assignment');
+    } catch (err) {
+      console.error('Failed to create assignment:', err);
+      setAssignmentError(err.message);
+    } finally {
+      setSubmitting(false);
     }
   };
 
   const handleExpenditureSubmit = async (e) => {
     e.preventDefault();
+    setExpenditureError('');
+
+    const quantityExpended = Number(expenditureForm.quantityExpended);
+    if (!Number.isInteger(quantityExpended) || quantityExpended < 1) {
+      setExpenditureError('Quantity must be a whole number of at least 1');
+      return;
+    }
+
+    setSubmitting(true);
     try {
-      const response = await fetch('/api/expenditures', {
+      const response = await fetch(`${API_URL}/api/expenditures`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(expenditureForm),
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
+        body: JSON.stringify({ ...expenditureForm, quantityExpended }),
       });
+      const data = await parseJson(response);
+      if (!response.ok) throw new Error(data.error || 'Failed to create expenditure');
 
-      if (!response.ok) throw new Error('Failed to create expenditure');
-
-      setExpenditureForm({ assetId: '', quantityExpended: '', reason: '' });
+      setExpenditureForm(emptyExpenditure);
       setShowExpenditureForm(false);
       fetchData();
-    } catch (error) {
-      console.error('Failed to create expenditure:', error);
-      alert('Failed to create expenditure');
+    } catch (err) {
+      console.error('Failed to create expenditure:', err);
+      setExpenditureError(err.message);
+    } finally {
+      setSubmitting(false);
     }
   };
 
   const handleReturnAssignment = async (id) => {
+    if (returningId !== null) return;
+    if (!window.confirm('Mark this asset as returned?')) return;
+
+    setReturningId(id);
     try {
-      const response = await fetch(`/api/assignments/${id}/return`, {
+      const response = await fetch(`${API_URL}/api/assignments/${id}/return`, {
         method: 'PATCH',
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+        headers: authHeaders,
       });
-
-      if (!response.ok) throw new Error('Failed to return assignment');
-
+      const data = await parseJson(response);
+      if (!response.ok) throw new Error(data.error || 'Failed to return assignment');
+      setError('');
+    } catch (err) {
+      console.error('Failed to return assignment:', err);
+      setError(err.message);
+    } finally {
+      setReturningId(null);
       fetchData();
-    } catch (error) {
-      console.error('Failed to return assignment:', error);
-      alert('Failed to return assignment');
     }
   };
 
@@ -121,35 +160,34 @@ const Assignments = () => {
     );
   }
 
+  const tabClass = (tab) =>
+    `flex-1 px-6 py-4 font-medium transition ${
+      activeTab === tab
+        ? 'border-b-2 border-blue-600 text-blue-600'
+        : 'text-gray-600 hover:text-gray-900'
+    }`;
+
   return (
     <div>
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-3xl font-bold text-gray-900">Assignments & Expenditures</h1>
       </div>
 
+      {error && (
+        <div className="mb-6 p-4 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">
+          {error}
+        </div>
+      )}
+
       <div className="bg-white rounded-xl shadow-md mb-6">
         <div className="flex border-b">
-          <button
-            onClick={() => setActiveTab('assignments')}
-            className={`flex-1 px-6 py-4 font-medium transition ${
-              activeTab === 'assignments'
-                ? 'border-b-2 border-blue-600 text-blue-600'
-                : 'text-gray-600 hover:text-gray-900'
-            }`}
-          >
+          <button onClick={() => setActiveTab('assignments')} className={tabClass('assignments')}>
             <div className="flex items-center justify-center space-x-2">
               <User className="w-4 h-4" />
               <span>Assignments</span>
             </div>
           </button>
-          <button
-            onClick={() => setActiveTab('expenditures')}
-            className={`flex-1 px-6 py-4 font-medium transition ${
-              activeTab === 'expenditures'
-                ? 'border-b-2 border-blue-600 text-blue-600'
-                : 'text-gray-600 hover:text-gray-900'
-            }`}
-          >
+          <button onClick={() => setActiveTab('expenditures')} className={tabClass('expenditures')}>
             <div className="flex items-center justify-center space-x-2">
               <Zap className="w-4 h-4" />
               <span>Expenditures</span>
@@ -162,7 +200,10 @@ const Assignments = () => {
         <div>
           <div className="flex justify-end mb-4">
             <button
-              onClick={() => setShowAssignmentForm(!showAssignmentForm)}
+              onClick={() => {
+                setAssignmentError('');
+                setShowAssignmentForm(!showAssignmentForm);
+              }}
               className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
             >
               <Plus className="w-4 h-4" />
@@ -173,32 +214,37 @@ const Assignments = () => {
           {showAssignmentForm && (
             <div className="bg-white rounded-xl shadow-md p-6 mb-6">
               <h2 className="text-xl font-semibold mb-4">Assign Asset to Personnel</h2>
+              {assignmentError && (
+                <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">
+                  {assignmentError}
+                </div>
+              )}
               <form onSubmit={handleAssignmentSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Asset</label>
+                  <label className={labelClass}>Asset</label>
                   <select
                     value={assignmentForm.assetId}
                     onChange={(e) => setAssignmentForm({ ...assignmentForm, assetId: e.target.value })}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                    className={inputClass}
                     required
                   >
                     <option value="">Select Asset</option>
                     {assets
-                      .filter(a => a.status === 'AVAILABLE')
+                      .filter((a) => a.status === 'AVAILABLE')
                       .map((asset) => (
-                        <option key={asset.id} value={asset.id}>
+                        <option key={asset.id} value={String(asset.id)}>
                           {asset.name} ({asset.type})
                         </option>
                       ))}
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Personnel Name</label>
+                  <label className={labelClass}>Personnel Name</label>
                   <input
                     type="text"
                     value={assignmentForm.personnelName}
                     onChange={(e) => setAssignmentForm({ ...assignmentForm, personnelName: e.target.value })}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                    className={inputClass}
                     required
                   />
                 </div>
@@ -212,9 +258,10 @@ const Assignments = () => {
                   </button>
                   <button
                     type="submit"
-                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+                    disabled={submitting}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:opacity-50"
                   >
-                    Assign Asset
+                    {submitting ? 'Assigning...' : 'Assign Asset'}
                   </button>
                 </div>
               </form>
@@ -222,57 +269,60 @@ const Assignments = () => {
           )}
 
           <div className="bg-white rounded-xl shadow-md overflow-hidden">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Asset</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Personnel</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Assigned Date</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {assignments.map((assignment) => (
-                  <tr key={assignment.id} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {assignment.asset?.name}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {assignment.personnelName}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {new Date(assignment.assignedDate).toLocaleDateString()}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`px-2 py-1 text-xs font-medium rounded-full ${
-                        assignment.status === 'ACTIVE' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'
-                      }`}>
-                        {assignment.status}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm">
-                      {assignment.status === 'ACTIVE' && (
-                        <button
-                          onClick={() => handleReturnAssignment(assignment.id)}
-                          className="text-blue-600 hover:text-blue-800 flex items-center space-x-1"
-                        >
-                          <RotateCcw className="w-4 h-4" />
-                          <span>Return</span>
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-                {assignments.length === 0 && (
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
                   <tr>
-                    <td colSpan="5" className="px-6 py-4 text-center text-sm text-gray-500">
-                      No assignments found
-                    </td>
+                    <th className={thClass}>Asset</th>
+                    <th className={thClass}>Personnel</th>
+                    <th className={thClass}>Assigned Date</th>
+                    <th className={thClass}>Status</th>
+                    <th className={thClass}>Actions</th>
                   </tr>
-                )}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {assignments.map((assignment) => (
+                    <tr key={assignment.id} className="hover:bg-gray-50">
+                      <td className={tdClass}>{assignment.asset?.name}</td>
+                      <td className={tdClass}>{assignment.personnelName}</td>
+                      <td className={tdClass}>
+                        {new Date(assignment.assignedDate).toLocaleDateString()}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span
+                          className={`px-2 py-1 text-xs font-medium rounded-full ${
+                            assignment.status === 'ACTIVE'
+                              ? 'bg-green-100 text-green-800'
+                              : 'bg-gray-100 text-gray-800'
+                          }`}
+                        >
+                          {assignment.status}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm">
+                        {assignment.status === 'ACTIVE' && (
+                          <button
+                            onClick={() => handleReturnAssignment(assignment.id)}
+                            disabled={returningId !== null}
+                            className="text-blue-600 hover:text-blue-800 flex items-center space-x-1 disabled:opacity-40"
+                          >
+                            <RotateCcw className="w-4 h-4" />
+                            <span>Return</span>
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                  {assignments.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="px-6 py-4 text-center text-sm text-gray-500">
+                        No assignments found
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}
@@ -281,7 +331,10 @@ const Assignments = () => {
         <div>
           <div className="flex justify-end mb-4">
             <button
-              onClick={() => setShowExpenditureForm(!showExpenditureForm)}
+              onClick={() => {
+                setExpenditureError('');
+                setShowExpenditureForm(!showExpenditureForm);
+              }}
               className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
             >
               <Plus className="w-4 h-4" />
@@ -292,43 +345,49 @@ const Assignments = () => {
           {showExpenditureForm && (
             <div className="bg-white rounded-xl shadow-md p-6 mb-6">
               <h2 className="text-xl font-semibold mb-4">Record Expenditure</h2>
+              {expenditureError && (
+                <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">
+                  {expenditureError}
+                </div>
+              )}
               <form onSubmit={handleExpenditureSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Asset</label>
+                  <label className={labelClass}>Asset</label>
                   <select
                     value={expenditureForm.assetId}
                     onChange={(e) => setExpenditureForm({ ...expenditureForm, assetId: e.target.value })}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                    className={inputClass}
                     required
                   >
                     <option value="">Select Asset</option>
                     {assets
-                      .filter(a => a.type === 'AMMUNITION')
+                      .filter((a) => a.type === 'AMMUNITION')
                       .map((asset) => (
-                        <option key={asset.id} value={asset.id}>
+                        <option key={asset.id} value={String(asset.id)}>
                           {asset.name}
                         </option>
                       ))}
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Quantity Expended</label>
+                  <label className={labelClass}>Quantity Expended</label>
                   <input
                     type="number"
+                    min="1"
+                    step="1"
                     value={expenditureForm.quantityExpended}
                     onChange={(e) => setExpenditureForm({ ...expenditureForm, quantityExpended: e.target.value })}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                    min="1"
+                    className={inputClass}
                     required
                   />
                 </div>
                 <div className="md:col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Reason</label>
+                  <label className={labelClass}>Reason</label>
                   <input
                     type="text"
                     value={expenditureForm.reason}
                     onChange={(e) => setExpenditureForm({ ...expenditureForm, reason: e.target.value })}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                    className={inputClass}
                     required
                   />
                 </div>
@@ -342,9 +401,10 @@ const Assignments = () => {
                   </button>
                   <button
                     type="submit"
-                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+                    disabled={submitting}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:opacity-50"
                   >
-                    Record Expenditure
+                    {submitting ? 'Recording...' : 'Record Expenditure'}
                   </button>
                 </div>
               </form>
@@ -352,41 +412,37 @@ const Assignments = () => {
           )}
 
           <div className="bg-white rounded-xl shadow-md overflow-hidden">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Asset</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Quantity</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Reason</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {expenditures.map((expenditure) => (
-                  <tr key={expenditure.id} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {expenditure.asset?.name}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {expenditure.quantityExpended}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {expenditure.reason}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {new Date(expenditure.date).toLocaleDateString()}
-                    </td>
-                  </tr>
-                ))}
-                {expenditures.length === 0 && (
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
                   <tr>
-                    <td colSpan="4" className="px-6 py-4 text-center text-sm text-gray-500">
-                      No expenditures found
-                    </td>
+                    <th className={thClass}>Asset</th>
+                    <th className={thClass}>Quantity</th>
+                    <th className={thClass}>Reason</th>
+                    <th className={thClass}>Date</th>
                   </tr>
-                )}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {expenditures.map((expenditure) => (
+                    <tr key={expenditure.id} className="hover:bg-gray-50">
+                      <td className={tdClass}>{expenditure.asset?.name}</td>
+                      <td className={tdClass}>{expenditure.quantityExpended}</td>
+                      <td className={tdClass}>{expenditure.reason}</td>
+                      <td className={tdClass}>
+                        {new Date(expenditure.date).toLocaleDateString()}
+                      </td>
+                    </tr>
+                  ))}
+                  {expenditures.length === 0 && (
+                    <tr>
+                      <td colSpan={4} className="px-6 py-4 text-center text-sm text-gray-500">
+                        No expenditures found
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}

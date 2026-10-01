@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { TrendingUp, TrendingDown, Package, ArrowLeftRight, ClipboardList, Filter, X } from 'lucide-react';
-
+import API_URL from '../config/api';
 const Dashboard = () => {
   const { token, user } = useAuth();
   const [metrics, setMetrics] = useState(null);
@@ -27,9 +27,9 @@ const Dashboard = () => {
       if (filters.base_id) queryParams.append('base_id', filters.base_id);
       if (filters.type) queryParams.append('type', filters.type);
 
-      const response = await fetch(`/api/dashboard/metrics?${queryParams}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const response = await fetch(`${API_URL}/api/dashboard/metrics?${queryParams}`, {
+  headers: { Authorization: `Bearer ${token}` },
+});
 
       const data = await response.json();
       setMetrics(data);
@@ -40,17 +40,20 @@ const Dashboard = () => {
     }
   };
 
-  const fetchBases = async () => {
-    try {
-      const response = await fetch('/api/bases', {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await response.json();
-      setBases(data);
-    } catch (error) {
-      console.error('Failed to fetch bases:', error);
-    }
-  };
+ const fetchBases = async () => {
+  try {
+    const response = await fetch(`${API_URL}/api/bases`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    const data = await response.json();
+    setBases(data);
+  } catch (error) {
+    console.error('Failed to fetch bases:', error);
+  }
+};
 
   const clearFilters = () => {
     setFilters({ date: '', base_id: '', type: '' });
