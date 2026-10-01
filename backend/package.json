@@ -3,14 +3,15 @@
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
-  "scripts": {
-    "start": "node server.js",
-    "dev": "node server.js",
-    "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate dev",
-    "prisma:seed": "node prisma/seed.js",
-    "prisma:studio": "prisma studio"
-  },
+"scripts": {
+  "start": "node server.js",
+  "dev": "node server.js",
+  "prisma:generate": "prisma generate",
+  "prisma:migrate": "prisma migrate dev",
+  "prisma:seed": "node prisma/seed.js",
+  "prisma:seed-users": "node prisma/seed-users.js",
+  "prisma:studio": "prisma studio"
+},
   "keywords": [],
   "author": "",
   "license": "ISC",
