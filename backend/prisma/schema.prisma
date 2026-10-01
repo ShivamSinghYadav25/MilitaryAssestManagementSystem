@@ -1,0 +1,129 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Base {
+  id          Int        @id @default(autoincrement())
+  name        String     @unique
+  location    String
+  createdAt   DateTime   @default(now())
+  assets      Asset[]
+  purchases   Purchase[]
+  transfers   Transfer[] @relation("TransfersFrom")
+  transfersTo Transfer[] @relation("TransfersTo")
+  users       User[]
+}
+
+model User {
+  id           Int        @id @default(autoincrement())
+  name         String
+  email        String     @unique
+  passwordHash String
+  role         UserRole
+  baseId       Int?
+  createdAt    DateTime   @default(now())
+  auditLogs    AuditLog[]
+  purchases    Purchase[]
+  base         Base?      @relation(fields: [baseId], references: [id])
+}
+
+model Asset {
+  id           Int           @id @default(autoincrement())
+  name         String
+  type         AssetType
+  baseId       Int
+  status       AssetStatus
+  createdAt    DateTime      @default(now())
+  base         Base          @relation(fields: [baseId], references: [id])
+  assignments  Assignment[]
+  expenditures Expenditure[]
+}
+
+model Purchase {
+  id        Int       @id @default(autoincrement())
+  assetType AssetType
+  quantity  Int
+  baseId    Int
+  date      DateTime  @default(now())
+  loggedBy  Int
+  createdAt DateTime  @default(now())
+  base      Base      @relation(fields: [baseId], references: [id])
+  user      User      @relation(fields: [loggedBy], references: [id])
+}
+
+model Transfer {
+  id         Int            @id @default(autoincrement())
+  assetType  AssetType
+  quantity   Int
+  fromBaseId Int
+  toBaseId   Int
+  timestamp  DateTime       @default(now())
+  status     TransferStatus
+  createdAt  DateTime       @default(now())
+  fromBase   Base           @relation("TransfersFrom", fields: [fromBaseId], references: [id])
+  toBase     Base           @relation("TransfersTo", fields: [toBaseId], references: [id])
+}
+
+model Assignment {
+  id            Int              @id @default(autoincrement())
+  assetId       Int
+  personnelName String
+  assignedDate  DateTime         @default(now())
+  status        AssignmentStatus
+  createdAt     DateTime         @default(now())
+  asset         Asset            @relation(fields: [assetId], references: [id])
+}
+
+model Expenditure {
+  id               Int      @id @default(autoincrement())
+  assetId          Int
+  quantityExpended Int
+  date             DateTime @default(now())
+  reason           String
+  createdAt        DateTime @default(now())
+  asset            Asset    @relation(fields: [assetId], references: [id])
+}
+
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  action    String
+  timestamp DateTime @default(now())
+  details   String
+  user      User     @relation(fields: [userId], references: [id])
+}
+
+enum UserRole {
+  ADMIN
+  BASE_COMMANDER
+  LOGISTICS_OFFICER
+}
+
+enum AssetType {
+  VEHICLE
+  WEAPON
+  AMMUNITION
+}
+
+enum AssetStatus {
+  AVAILABLE
+  ASSIGNED
+  EXPENDED
+  IN_TRANSIT
+}
+
+enum TransferStatus {
+  PENDING
+  COMPLETED
+  CANCELLED
+}
+
+enum AssignmentStatus {
+  ACTIVE
+  RETURNED
+}
