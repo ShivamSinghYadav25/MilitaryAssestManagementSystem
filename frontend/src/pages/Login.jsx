@@ -8,27 +8,62 @@ const Login = () => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
   const { login } = useAuth();
   const navigate = useNavigate();
 
   const quickLoginUsers = [
-    { email: 'admin@military.gov', password: 'password123', role: 'Admin', name: 'System Administrator' },
-    { email: 'commander1@military.gov', password: 'password123', role: 'Base Commander', name: 'John Commander' },
-    { email: 'commander2@military.gov', password: 'password123', role: 'Base Commander', name: 'Jane Commander' },
-    { email: 'logistics@military.gov', password: 'password123', role: 'Logistics Officer', name: 'Logistics Officer' },
+    {
+      email: 'admin@military.gov',
+      password: 'password123',
+      role: 'Admin',
+      name: 'System Administrator'
+    },
+    {
+      email: 'commander1@military.gov',
+      password: 'password123',
+      role: 'Base Commander',
+      name: 'John Commander'
+    },
+    {
+      email: 'commander2@military.gov',
+      password: 'password123',
+      role: 'Base Commander',
+      name: 'Jane Commander'
+    },
+    {
+      email: 'logistics@military.gov',
+      password: 'password123',
+      role: 'Logistics Officer',
+      name: 'Logistics Officer'
+    }
   ];
 
   const handleLogin = async (e) => {
     e.preventDefault();
+
+    console.log('HANDLE LOGIN IS RUNNING');
+    console.log('API URL:', import.meta.env.VITE_API_URL);
+
     setError('');
     setLoading(true);
 
     try {
-      const response = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-      });
+      const response = await fetch(
+        `${import.meta.env.VITE_API_URL}/api/auth/login`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            email,
+            password
+          })
+        }
+      );
+
+      console.log('Login response status:', response.status);
 
       const data = await response.json();
 
@@ -36,9 +71,13 @@ const Login = () => {
         throw new Error(data.error || 'Login failed');
       }
 
+      console.log('Login successful');
+
       login(data.token, data.user);
       navigate('/dashboard');
+
     } catch (err) {
+      console.error('Login error:', err);
       setError(err.message);
     } finally {
       setLoading(false);
@@ -53,17 +92,28 @@ const Login = () => {
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 to-gray-700 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md">
+
         <div className="text-center mb-8">
           <div className="flex justify-center mb-4">
             <Shield className="w-16 h-16 text-blue-600" />
           </div>
-          <h1 className="text-3xl font-bold text-gray-900">Military Asset Management</h1>
-          <p className="text-gray-600 mt-2">Sign in to access the system</p>
+
+          <h1 className="text-3xl font-bold text-gray-900">
+            Military Asset Management
+          </h1>
+
+          <p className="text-gray-600 mt-2">
+            Sign in to access the system
+          </p>
         </div>
 
         <form onSubmit={handleLogin} className="space-y-6">
+
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Email
+            </label>
+
             <input
               type="email"
               value={email}
@@ -75,7 +125,10 @@ const Login = () => {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Password</label>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Password
+            </label>
+
             <input
               type="password"
               value={password}
@@ -106,26 +159,43 @@ const Login = () => {
               </>
             )}
           </button>
+
         </form>
 
         <div className="mt-8 pt-6 border-t border-gray-200">
-          <p className="text-sm text-gray-600 mb-4 text-center">Quick Login (Demo Accounts)</p>
+
+          <p className="text-sm text-gray-600 mb-4 text-center">
+            Quick Login (Demo Accounts)
+          </p>
+
           <div className="space-y-2">
+
             {quickLoginUsers.map((user) => (
               <button
                 key={user.email}
+                type="button"
                 onClick={() => handleQuickLogin(user)}
                 className="w-full text-left px-4 py-3 bg-gray-50 hover:bg-gray-100 rounded-lg transition flex items-center justify-between group"
               >
                 <div>
-                  <div className="font-medium text-gray-900">{user.name}</div>
-                  <div className="text-sm text-gray-600">{user.role}</div>
+                  <div className="font-medium text-gray-900">
+                    {user.name}
+                  </div>
+
+                  <div className="text-sm text-gray-600">
+                    {user.role}
+                  </div>
                 </div>
-                <span className="text-xs text-gray-500 group-hover:text-blue-600 transition">Click to fill</span>
+
+                <span className="text-xs text-gray-500 group-hover:text-blue-600 transition">
+                  Click to fill
+                </span>
               </button>
             ))}
+
           </div>
         </div>
+
       </div>
     </div>
   );
